@@ -15,13 +15,16 @@ void setup()
   digitalWrite(LEDPinG, LOW);
   digitalWrite(LEDPinY, LOW);
   digitalWrite(LEDPinB, LOW);
+
 // run mode buttons
   pinMode(TestPin, INPUT_PULLUP);
-  TESTING = true;
+  TESTING = false;
   pinMode(FeedBackPin, INPUT_PULLUP);
   FEEDBACK = false;
   pinMode(DebugPin, INPUT_PULLUP);
-  DEBUG = false;
+  DEBUG = true;
+  ISRhit = false;
+  HEloopcnt = 1;
 
 // setup  
   OLEDsetup();
@@ -29,7 +32,9 @@ void setup()
   NewOled.bmap = "setup"; OLEDloop(); Serial.println("setup");
 
   HESetup();
+
   LCDsetup();
+
   Matrixsetup();
 
   str = "";
@@ -49,10 +54,32 @@ void setup()
   NewOled.bmap = str; OLEDloop();
 
 }
+void HESetup()
+{
+
+  NewOled.bmap = "HESetup"; OLEDloop(); Serial.println("HEsetup");
+
+  HEInit();
+
+// interrupt service routines
+  pinMode(TachPin, INPUT);    // HEI Tachometer signal
+ 
+//  pinMode(DrivePin, INPUT);   // Transmission VSS signal 
+  
+//  pinMode(AxlePin, INPUT);  // Axle hall effect sensor
+  
+  attachInterrupt(TachPin, HETachISR, HIGH);  
+  
+//  attachInterrupt(DrivePin, HEDriveISR, LOW);
+  
+//  attachInterrupt(AxlePin, HEAxleISR, LOW); 
+ 
+}
+
 void loop()
 {
 
-  if (FEEDBACK){NewOled.bmap = "loop"; OLEDloop();} if (DEBUG){Serial.println("loop");}
+  if (FEEDBACK){NewOled.bmap = "loop"; OLEDloop();} if (DEBUG){Serial.print("loop "); Serial.println(HEloopcnt);}
  
   if (TESTING){loopTest();}
   else
@@ -64,6 +91,116 @@ void loop()
   }
   
   if (DEBUG){loopDebug();}
+
+}
+void HELoop() 
+{
+
+  if (FEEDBACK){NewOled.bmap = "HEloop "; OLEDloop();} //if (DEBUG){Serial.println("HEloop");}
+  delay(1000);
+  detachInterrupt(TachPin);    
+//detachInterrupt(DrivePin);  
+//detachInterrupt(AxlePin); 
+
+//temp          
+QTtime=millis()-QToldtime;
+QTrpm=(QTrev/QTtime)*60000;
+Serial.print("QT time ");
+Serial.print(QTtime);
+Serial.print(" rev ");
+Serial.print(QTrev);
+Serial.print(" rpm ");
+Serial.print(QTrpm);
+Serial.println(" ");
+QToldtime=millis();
+QTrev=0;
+//temp
+
+// Tachometer
+  HETach();
+// Transmission
+// here  HEDrive();
+// Axle
+// here  HEAxle();
+
+  if (TESTING){HELoopTestRPM();}
+  if (TESTING){HELoopTestGear();}
+  else
+  {
+    HELoopErpm();
+  }
+
+  HEloopcnt++;
+
+  if (ISRhit)
+  {
+    exit(0);
+  }
+
+  attachInterrupt(TachPin, HETachISR, HIGH); // get a pulse cnount 
+//  attachInterrupt(DrivePin, HEDriveISR, LOW);
+//  attachInterrupt(AxlePin, HEAxleISR, LOW); 
+
+}
+void HETach()
+{
+
+  if (FEEDBACK){NewOled.bmap = "HETach "; OLEDloop();} //if (DEBUG){Serial.println("HETach");}
+
+// The frequency of the pulses corresponds to the engine's RPM. For an 8-cylinder engine, 
+// there are 4 pulses per crankshaft revolution 
+//  500 RPM x 4 ppr =   2000 pulses per minute / 60 = 33.33 pulses per second
+// 6000 RPM x 4 ppr = 24,000 pulses per minute / 60 = 400 pulses per second
+// (x pulses per second * 60) / 4 = RPM
+  
+  Tach.RPM = Tach.PulseCnt / TachPPR;   
+
+  if (DEBUG)
+  {
+    Serial.print("Tachometer pulse ");
+    Serial.print(Tach.PulseCnt);
+    Serial.print(" RPM ");
+    Serial.println(Tach.RPM);
+  }
+    
+  Tach.Duration = 0; 
+  Tach.PulseCnt = 0;
+
+}
+void HETachISR()  // the isr is invoked from the attached until it is detached ! 
+{
+
+  QTrev++;
+  
+  if (HEloopcnt > 10)
+  {
+    ISRhit = true;
+  }
+
+  return;
+  digitalWrite(LEDPinG, HIGH);
+ 
+  do // for one second
+  {
+    Tach.CurrMicros = micros();
+    Tach.DiffMicros = Tach.CurrMicros - Tach.PrevMicros;
+    Tach.Duration += Tach.DiffMicros;   
+    Tach.PrevMicros = Tach.CurrMicros;
+    Tach.PulseCnt++;
+  } while (Tach.Duration < OneM);
+
+  digitalWrite(LEDPinG, LOW);
+
+}
+void HEInit()
+{
+
+  NewOled.bmap = "HEInit "; OLEDloop(); Serial.println("HEInit");
+
+  TachPulseCnt = 1;
+  DrivePulseCnt = 1;
+  AxlePulseCnt = 1;
+  GearRatio = 0.0;
 
 }
 void loopTest()
@@ -88,22 +225,16 @@ void loopDebug()
   str = "";
   str = "Basic Tach Pulse ";
   str += String(Tach.PulseCnt);
-  str += " Average Tach Pulse ";
-  str += String(ATach.PulseCnt);
   Serial.println(str);  
   
   str = "";
   str = "Basic Drive Pulse ";
   str += String(Drive.PulseCnt);
-  str += " Average Drive Pulse ";
-  str += String(ADrive.PulseCnt);
   Serial.println(str);
   
   str = "";
   str = "Basic Axle Pulse ";
   str += String(Axle.PulseCnt);
-  str += " Average Axle Pulse ";
-  str += String(AAxle.PulseCnt);
   Serial.println(str);
 
 }
@@ -216,58 +347,15 @@ void Matrixsetup()
   matrix.endDraw();
 
 }
-void HESetup()
-{
 
-  NewOled.bmap = "HESetup"; OLEDloop(); Serial.println("HEsetup");
-
-  HEInit();
-
-// interrupt service routines
-  pinMode(TachPin, INPUT);    // HEI Tachometer signal
- 
-  pinMode(DrivePin, INPUT);   // Transmission VSS signal 
-  
-  pinMode(AxlePin, INPUT);  // Axle hall effect sensor
-  
-  attachInterrupt(TachPin, HETachISR, RISING);  
-  
-  attachInterrupt(DrivePin, HEDriveISR, RISING);
-  
-  attachInterrupt(AxlePin, HEAxleISR, RISING); 
- 
-}
-void HEInit()
-{
-
-  NewOled.bmap = "HEInit "; OLEDloop(); Serial.println("HEInit");
-//QT
-  QTvalue=0.0;
-  QTrev=0.0;
-  QTrpm=0;
-  QToldtime=0;
-  QTtime=0;
-
-  TachPulseCnt = 1;
-  DrivePulseCnt = 1;
-  AxlePulseCnt = 1;
-  GearRatio = 0.0;
-
-}
 void HEInitBase()
 {
-// base structure 
-  Root.DiffMillis = 0;
-  Root.CurrMillis = 0;
-  Root.PrevMillis = 0; 
+ 
   Root.DiffMicros = 0;
   Root.CurrMicros = 0;
   Root.PrevMicros = 0;
   Root.Duration = 0; 
-  Root._Duration = 0;
   Root.PulseCnt = 0;
-  Root._PulseCnt = 0;
-  Root.Freq = 0.0;
   Root.RPM = 0.0;
 
 // Tachometer
@@ -276,41 +364,6 @@ void HEInitBase()
   Drive = Root;
 // Axel
   Axle = Root;
-}
-void HEInitAvg()
-{
-// average structure
-  ARoot.numReadings = 2;
-  ARoot.readIndex = 0;
-  ARoot.DiffMillis = 0;
-  ARoot.ZeroDiff = 0;
-  ARoot.DiffMicros = 0;   
-  ARoot.ZeroTimeout = 300000;  
-  ARoot.LastTimeWeMeasured = 0;   
-  ARoot.PeriodBetweenPulses = ARoot.ZeroTimeout + 1000; 
-  ARoot.PeriodAverage = ARoot.ZeroTimeout + 1000; 
-  ARoot.FrequencyRaw = 0; 
-  ARoot.FrequencyReal = 0;
-  ARoot.RPM = 0;
-  ARoot.PulseCnt = 1;
-  ARoot.PeriodSum = 0;
-  ARoot.LastTimeCycleMeasure = 0; 
-  ARoot.CurrentMicros = micros(); 
-  ARoot.AmountOfReadings = 1;
-  ARoot.ZeroDebouncingExtra = 0;
-  ARoot.Readings[0] = 0;  
-  ARoot.Readings[1] = 0;
-  ARoot.Total = 0;
-  ARoot.Average = 0;
-  ARoot.RemapedAmountOfReadings;
-
-// Tachometer
-  ATach = ARoot;
-// Driveshaft
-  ADrive = ARoot;
-// Axel
-  AAxle = ARoot;
-
 }
 void OLEDsetup()
 {
@@ -574,7 +627,9 @@ void LCDLogFeed()
 }
 void LCDLogDebug()
 {
+
 // per hour
+  strph = "";
   str = String(EngineRPH);
   strph += str;
   str = String(TransmissionRPH);
@@ -585,11 +640,11 @@ void LCDLogDebug()
   strph += str;
   str = String(MPH);
   strph += " MPH ";
-  strph += str;
-  
+  strph += str;  
   Serial.println(strph);
 
 // per minute
+  strpm = "";
   str = String(MPM);
   strpm += " MPM ";
   strpm += str;
@@ -601,7 +656,6 @@ void LCDLogDebug()
     str = String(AxleRPM);  
   strpm += " Ax ";
   strpm += str;
-
   Serial.println(strpm);
 
 }
@@ -824,104 +878,18 @@ void MatrixloopTestJ()
     break;
   }
 
-} 
-void HELoop() 
-{
-
-  if (FEEDBACK){NewOled.bmap = "HEloop "; OLEDloop();} //if (DEBUG){Serial.println("HEloop");}
-
-//QT
-  detachInterrupt(TachPin);  
-  
-  detachInterrupt(DrivePin);
-  
-  detachInterrupt(AxlePin); 
-
-//QT
-  delay(1000);
-  QTtime = millis()- QToldtime;   //finds the time 
-  QTrpm = (QTrev/QTtime) *60000;  //calculates rpm
-  QToldtime = millis();           //saves the current time
-  QTrev = 0;
-
-  if (DEBUG)
-  {
-    strHE = "  QT Hall Effect ";  
-    str = String(QTrpm);
-    strHE += str;  
-    Serial.println(strHE);
-  }
-
-// Basic calculations
-// Tachometer
-  HETach();
-// Transmission
-  HEDrive();
-// Axle
-  HEAxle();
-
-  if (DEBUG){HELoopDebugB();}
-
-// Average calculations
-// Tachometer
-  HEATach();
-// Transmission
-  HEADrive();
-// Axle
-  HEAAxle();
-
-  if (DEBUG){HELoopDebugA();}
-  if (TESTING){HELoopTestRPM();}
-  if (TESTING){HELoopTestGear();}
-  else
-  {
-    HELoopErpm();
-  }
-
-//QT
-  attachInterrupt(TachPin, HETachISR, RISING);  
-  
-  attachInterrupt(DrivePin, HEDriveISR, RISING);
-  
-  attachInterrupt(AxlePin, HEAxleISR, RISING); 
-
 }
 void HELoopDebugB()
 {
 
-  strHE = "  Basic Hall Effect ";  
-  str = String(Tach.RPM);  
-  strHE += " Tach ";
-  strHE += str;  
-  str = String(Drive.RPM);
-  strHE += " Drive ";
-  strHE += str;
-  str = String(Gear);
-  strHE += " Gear ";
-  strHE += str;  
-  str = String(Axle.RPM);
-  strHE += " Axle ";
-  strHE += str;
-  Serial.println(strHE);
-
-}
-void HELoopDebugA()
-{
-
-  strHE = "Average Hall Effect ";  
-  str = String(ATach.RPM);  
-  strHE += " Tach ";
-  strHE += str;  
-  str = String(ADrive.RPM);
-  strHE += " Drive ";
-  strHE += str;
-  str = String(Gear);
-  strHE += " Gear ";
-  strHE += str;  
-  str = String(AAxle.RPM);
-  strHE += " Axle ";
-  strHE += str;
-  Serial.println(strHE);
+  Serial.print("Hall Effect Tach ");  
+  Serial.print(Tach.RPM);  
+  Serial.print(" Drive ");
+  Serial.print(Drive.RPM);
+  Serial.print(" Gear ");
+  Serial.print(Gear);
+  Serial.print(" Axle ");
+  Serial.println(Axle.RPM);
 
 }
 void HELoopTestRPM()
@@ -1074,129 +1042,6 @@ void SetPulse()
   AxlePulseCnt *= AxlePPR;
 
 }
-void HETach()
-{
-
-  if (FEEDBACK){NewOled.bmap = "HETach "; OLEDloop();} //if (DEBUG){Serial.println("HETach");}
-
-// The frequency of the pulses corresponds to the engine's RPM. For an 8-cylinder engine, 
-// there are 4 pulses per crankshaft revolution 
-//  500 RPM x 4 ppr =   2000 pulses per minute / 60 = 33.33 pulses per second
-// 6000 RPM x 4 ppr = 24,000 pulses per minute / 60 = 400 pulses per second
-// (x pulses per second * 60) / 4 = RPM
-
-  Tach.CurrMillis = millis();
- 
-  Tach.DiffMillis = Tach.CurrMillis - Tach.PrevMillis;
-  if (Tach.DiffMillis < MainPeriod)
-  {
-    return;
-  }
-
-  Tach.PrevMillis = Tach.CurrMillis;   
-  Tach._Duration = Tach.Duration;
-  Tach._PulseCnt = Tach.PulseCnt;
-  
-  Tach.RPM = Tach.PulseCnt * 60;
-  Tach.RPM /= TachPPR;   
-  
-  Tach.Duration = 0; 
-  Tach.PulseCnt = 0;
-  
-  Tach.Freq = 1e6 / float(Tach._Duration);   
-  Tach.Freq *= Tach._PulseCnt;
-
-  if (DEBUG)
-  {
-    Serial.print("Tachometer RPM: ");
-    Serial.print(Tach.RPM);
-    Serial.print(" Frequency: ");
-    Serial.print(Tach.Freq);
-    Serial.println(" Hz");
-  }
-
-}
-void HETachISR()
-{
-
-  digitalWrite(LEDPinG, HIGH);
-  //exit(0);
-//QT
-  QTrev++;
-
-// basic
-  Tach.CurrMicros = micros();
-  Tach.DiffMicros = Tach.CurrMicros - Tach.PrevMicros;
-  Tach.Duration += Tach.DiffMicros;   
-  Tach.PrevMicros = Tach.CurrMicros;
-  Tach.PulseCnt++;
-
-// average
-  ATach.PeriodBetweenPulses = micros() - ATach.LastTimeWeMeasured; 
-  ATach.LastTimeWeMeasured = micros();
-  
-  if (ATach.PulseCnt >= ATach.AmountOfReadings)
-  {
-    ATach.PeriodAverage = ATach.PeriodSum / ATach.AmountOfReadings;
-    ATach.PulseCnt = 1; 
-    ATach.PeriodSum = ATach.PeriodBetweenPulses;
-    ATach.RemapedAmountOfReadings = map(ATach.PeriodBetweenPulses, 40000, 5000, 1, 10);
-    ATach.RemapedAmountOfReadings = constrain(ATach.RemapedAmountOfReadings, 1, 10);
-    ATach.AmountOfReadings = ATach.RemapedAmountOfReadings;    
-  }
-  else
-  {
-    ATach.PeriodSum = ATach.PeriodSum + ATach.PeriodBetweenPulses;
-    ATach.PulseCnt++; 
-  }  
-
-  digitalWrite(LEDPinG, LOW);
-
-}
-void HEATach()
-{
-
-  if (FEEDBACK){NewOled.bmap = "HEATach "; OLEDloop();} //if (DEBUG){Serial.println("HEATach");}
-
-  ATach.LastTimeCycleMeasure = ATach.LastTimeWeMeasured; 
-  ATach.CurrentMicros = micros(); 
-  
-  if (ATach.CurrentMicros < ATach.LastTimeCycleMeasure)
-  {
-    ATach.LastTimeCycleMeasure = ATach.CurrentMicros;
-  }
-  
-  ATach.FrequencyRaw = TenB / ATach.PeriodAverage; 
-  ATach.ZeroDiff = ATach.ZeroTimeout - ATach.ZeroDebouncingExtra;  
-  ATach.DiffMicros = ATach.CurrentMicros - ATach.LastTimeCycleMeasure;       
-
-  if(ATach.PeriodBetweenPulses > ATach.ZeroDiff 
-  || ATach.DiffMicros > ATach.ZeroDiff)
-  {  
-    ATach.FrequencyRaw = 0;
-    ATach.ZeroDebouncingExtra = 2000;
-  }
-  else
-  {
-    ATach.ZeroDebouncingExtra = 0;
-  }
-  
-  ATach.FrequencyReal = ATach.FrequencyRaw / 10000;
-  ATach.RPM = ATach.FrequencyRaw / TachPPR * 60;
-  ATach.RPM = ATach.RPM / 10000; 
-  ATach.Total = ATach.Total - ATach.Readings[ATach.readIndex];
-  ATach.Readings[ATach.readIndex] = ATach.RPM;
-  ATach.Total = ATach.Total + ATach.Readings[ATach.readIndex];
-  ATach.readIndex = ATach.readIndex + 1;
-  
-  if (ATach.readIndex >= ATach.numReadings)
-  {
-    ATach.readIndex = 0;
-  }
- 
-  ATach.Average = ATach.Total / ATach.numReadings;
-
-}
 void HEDrive()
 {
 
@@ -1208,43 +1053,24 @@ void HEDrive()
 //  500 RPM x 8 ppr =   4000 pulses per minute / 60 = 66.66 pulses per second
 // 6000 RPM x 8 ppr = 48,000 pulses per minute / 60 = 800 pulses per second
 // (y pulses per second * 60) / 8 = RPM
-
-  Drive.CurrMillis = millis();
-  Drive.DiffMillis = Drive.CurrMillis - Drive.PrevMillis;
-
-  if (Drive.DiffMillis < MainPeriod)
-  {
-    return;
-  }
-
-  Drive.PrevMillis = Drive.CurrMillis;   
-  Drive._Duration = Drive.Duration;
-  Drive._PulseCnt = Drive.PulseCnt;
   
-  Drive.RPM = Drive.PulseCnt * 60;
-  Drive.RPM /= DrivePPR; 
+  Drive.RPM = Drive.PulseCnt / DrivePPR;   
   
-  Drive.Duration = 0; 
-  Drive.PulseCnt = 0;
-  
-  Drive.Freq = 1e6 / float(Drive._Duration);   
-  Drive.Freq *= Drive._PulseCnt;
-
   if (DEBUG)
   {
-    Serial.print("Transmission RPM: ");
-    Serial.print(Drive.RPM);
-    Serial.print(" Frequency: ");
-    Serial.print(Drive.Freq);
-    Serial.println(" Hz"); 
+    Serial.print("Drive pulse ");
+    Serial.print(Drive.PulseCnt);
+    Serial.print(" RPM ");
+    Serial.println(Drive.RPM);
   }
+
+  Drive.Duration = 0; 
+  Drive.PulseCnt = 0;
 
 }
 void HEDriveISR()
 {
-// basic
   digitalWrite(LEDPinY, HIGH);
-  //exit(0);
 
   Drive.CurrMicros = micros();
   Drive.DiffMicros = Drive.CurrMicros - Drive.PrevMicros;
@@ -1252,70 +1078,7 @@ void HEDriveISR()
   Drive.PrevMicros = Drive.CurrMicros;
   Drive.PulseCnt++;
 
-// average
-  ADrive.PeriodBetweenPulses = micros() - ADrive.LastTimeWeMeasured; 
-  ADrive.LastTimeWeMeasured = micros();
-  
-  if (ADrive.PulseCnt >= ADrive.AmountOfReadings)
-  {
-    ADrive.PeriodAverage = ADrive.PeriodSum / ADrive.AmountOfReadings;
-    ADrive.PulseCnt = 1; 
-    ADrive.PeriodSum = ADrive.PeriodBetweenPulses;
-    ADrive.RemapedAmountOfReadings = map(ADrive.PeriodBetweenPulses, 40000, 5000, 1, 10);
-    ADrive.RemapedAmountOfReadings = constrain(ADrive.RemapedAmountOfReadings, 1, 10);
-    ADrive.AmountOfReadings = ADrive.RemapedAmountOfReadings;
-  }
-  else
-  {
-    ADrive.PeriodSum = ADrive.PeriodSum + ADrive.PeriodBetweenPulses;
-    ADrive.PulseCnt++;
-  }
-
   digitalWrite(LEDPinY, LOW);
-
-}
-void HEADrive()
-{
-  
-  if (FEEDBACK){NewOled.bmap = "HEADrive "; OLEDloop();} //if (DEBUG){Serial.println("HEADrive");}
-
-  ADrive.LastTimeCycleMeasure = ADrive.LastTimeWeMeasured; 
-  ADrive.CurrentMicros = micros(); 
-  
-  if (ADrive.CurrentMicros < ADrive.LastTimeCycleMeasure)
-  {
-    ADrive.LastTimeCycleMeasure = ADrive.CurrentMicros;
-  }
-  
-  ADrive.FrequencyRaw = TenB / ADrive.PeriodAverage; 
-  ADrive.ZeroDiff = ADrive.ZeroTimeout - ADrive.ZeroDebouncingExtra;  
-  ADrive.DiffMicros = ADrive.CurrentMicros - ADrive.LastTimeCycleMeasure;       
-
-  if(ADrive.PeriodBetweenPulses > ADrive.ZeroDiff 
-  || ADrive.DiffMicros > ADrive.ZeroDiff)
-  {  
-    ADrive.FrequencyRaw = 0;
-    ADrive.ZeroDebouncingExtra = 2000;
-  }
-  else
-  {
-    ADrive.ZeroDebouncingExtra = 0;
-  }
-  
-  ADrive.FrequencyReal = ADrive.FrequencyRaw / 10000;
-  ADrive.RPM = ADrive.FrequencyRaw / DrivePPR * 60;
-  ADrive.RPM = ADrive.RPM / 10000; 
-  ADrive.Total = ADrive.Total - ADrive.Readings[ADrive.readIndex];
-  ADrive.Readings[ADrive.readIndex] = ADrive.RPM;
-  ADrive.Total = ADrive.Total + ADrive.Readings[ADrive.readIndex];
-  ADrive.readIndex = ADrive.readIndex + 1;
-  
-  if (ADrive.readIndex >= ADrive.numReadings)
-  {
-    ADrive.readIndex = 0;
-  }
- 
-  ADrive.Average = ADrive.Total / ADrive.numReadings;
 
 }
 void HEAxle()
@@ -1327,36 +1090,20 @@ void HEAxle()
 //  500 RPM x 1 ppr =   500 pulses per minute / 60 = 8.33 pulses per second
 // 6000 RPM x 1 ppr = 6,000 pulses per minute / 60 = 100 pulses per second
 // (z pulses per second * 60) / 8 = RPM
-
-  Axle.CurrMillis = millis();
-  Axle.DiffMillis = Axle.CurrMillis - Axle.PrevMillis;
-
-  if (Axle.DiffMillis < MainPeriod)
-  {
-    return;
-  }
-
-  Axle.PrevMillis = Axle.CurrMillis;   
-  Axle._Duration = Axle.Duration;
-  Axle._PulseCnt = Axle.PulseCnt;
   
   Axle.RPM = Axle.PulseCnt * 60;
   Axle.RPM /= AxlePPR;  
   
-  Axle.Duration = 0; 
-  Axle.PulseCnt = 0;
-  
-  Axle.Freq = 1e6 / float(Axle._Duration);   
-  Axle.Freq *= Axle._PulseCnt;
-
   if (DEBUG)
   {
-    Serial.print("Axle RPM: ");
-    Serial.print(Axle.RPM);
-    Serial.print(" Frequency: ");
-    Serial.print(Axle.Freq);
-    Serial.println(" Hz");
+    Serial.print("Axle pulse ");
+    Serial.print(Axle.PulseCnt);
+    Serial.print(" RPM ");
+    Serial.println(Axle.RPM);
   }
+
+  Axle.Duration = 0; 
+  Axle.PulseCnt = 0;
 
 }
 void HEAxleISR()
@@ -1371,69 +1118,7 @@ void HEAxleISR()
   Axle.PrevMicros = Axle.CurrMicros;
   Axle.PulseCnt++;
 
-// average
-  AAxle.PeriodBetweenPulses = micros() - AAxle.LastTimeWeMeasured; 
-  AAxle.LastTimeWeMeasured = micros();
-  
-  if(AAxle.PulseCnt >= AAxle.AmountOfReadings)
-  {
-    AAxle.PeriodAverage = AAxle.PeriodSum / AAxle.AmountOfReadings;
-    AAxle.PulseCnt = 1; 
-    AAxle.PeriodSum = AAxle.PeriodBetweenPulses;
-    AAxle.RemapedAmountOfReadings = map(AAxle.PeriodBetweenPulses, 40000, 5000, 1, 10);
-    AAxle.RemapedAmountOfReadings = constrain(AAxle.RemapedAmountOfReadings, 1, 10);
-    AAxle.AmountOfReadings = AAxle.RemapedAmountOfReadings;
-  }
-  else
-  {
-    AAxle.PeriodSum = AAxle.PeriodSum + AAxle.PeriodBetweenPulses;
-    AAxle.PulseCnt++;    
-  }
-
   digitalWrite(LEDPinB, LOW);
 
 }
-void HEAAxle()
-{
 
-  if (FEEDBACK){NewOled.bmap = "HEAAxle "; OLEDloop();} //if (DEBUG){Serial.println("HEAAxle");}
-
-  AAxle.LastTimeCycleMeasure = AAxle.LastTimeWeMeasured; 
-  AAxle.CurrentMicros = micros(); 
-  
-  if(AAxle.CurrentMicros < AAxle.LastTimeCycleMeasure)
-  {
-    AAxle.LastTimeCycleMeasure = AAxle.CurrentMicros;
-  }
-  
-  AAxle.FrequencyRaw = TenB / AAxle.PeriodAverage; 
-  AAxle.ZeroDiff = AAxle.ZeroTimeout - AAxle.ZeroDebouncingExtra;  
-  AAxle.DiffMicros = AAxle.CurrentMicros - AAxle.LastTimeCycleMeasure;       
-
-  if(AAxle.PeriodBetweenPulses > AAxle.ZeroDiff 
-  || AAxle.DiffMicros > AAxle.ZeroDiff)
-  {  
-    AAxle.FrequencyRaw = 0;
-    AAxle.ZeroDebouncingExtra = 2000;
-  }
-  else
-  {
-    AAxle.ZeroDebouncingExtra = 0;
-  }
-  
-  AAxle.FrequencyReal = AAxle.FrequencyRaw / 10000;
-  AAxle.RPM = AAxle.FrequencyRaw / AxlePPR * 60;
-  AAxle.RPM = AAxle.RPM / 10000; 
-  AAxle.Total = AAxle.Total - AAxle.Readings[AAxle.readIndex];
-  AAxle.Readings[AAxle.readIndex] = AAxle.RPM;
-  AAxle.Total = AAxle.Total + AAxle.Readings[AAxle.readIndex];
-  AAxle.readIndex = AAxle.readIndex + 1;
-  
-  if (AAxle.readIndex >= AAxle.numReadings)
-  {
-    AAxle.readIndex = 0;
-  }
- 
-  AAxle.Average = AAxle.Total / AAxle.numReadings;
-
-}
