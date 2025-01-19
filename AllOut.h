@@ -6,6 +6,7 @@
 // Hall Effects Sensors & magnets mounted to rear axle
 //
 // libraries
+#include <Arduino.h>
 // Organic Light Emmiting Diode 128x64  
 #include <SPI.h>
 #include <Wire.h>
@@ -20,6 +21,8 @@
 #include <LiquidCrystal_I2C.h>
 // Buttons
 #include <Bounce2.h>
+// Timers
+//#include <TimerOne.h>
 // define
 #define BAUD 9600
 #define SCREEN_WIDTH 128 
@@ -30,19 +33,25 @@
 #define TachPPR 16   // HEI is actually 4
 #define DrivePPR 8   // 
 #define AxlePPR 4 
-// green tach
-#define LEDPinG 13
-#define TachPin 2
-// yellow transmission
-#define LEDPinY 12
-#define DrivePin 3
-// blue axle
-#define LEDPinB 11                                                                                                                                  
-#define AxlePin 4
-// run mode buttons
-#define TestPin 8
-#define FeedBackPin 9
-#define DebugPin 10
+// digital pins
+#define Dontuse0 0     // to pi
+#define Dontuse1 1
+#define TachPin 2     // hardware inturrupt
+#define DrivePin 3    // hardware inturrupt
+#define AxlePin 4     // software inturrupt
+#define UnusedPin5 5
+#define UnusedPin6 6
+#define UnusedPin7 7   
+#define TestBut 8
+#define FeedBackBut 9
+#define DebugBut 10
+#define LEDPinB 11    // blue Axle
+#define LEDPinY 12    // yellow transmission
+#define LEDPinG 13    // green Tach
+// objects
+Bounce TestButb = Bounce();
+Bounce FeedBackButb = Bounce();
+Bounce DebugButb = Bounce();
 // devices
 // OLED screen
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
@@ -56,6 +65,7 @@ LiquidCrystal_I2C lcd(0x27, 20, 4);
 //constants
 const long  TenB = 10000000000;
 const long  OneM = 1000000; 
+const long  OneK = 1000; 
 const float TireDiameter = 24.9;
 const float Differential = 3.364; 
 const float FirstGear  = 2.97;
@@ -78,13 +88,22 @@ byte DebugPinState;
 bool TESTING; 
 bool FEEDBACK;
 bool DEBUG;
-bool ISRhit;
+bool BOOLEAN;
 
 //char
+unsigned char TachISRVector;
+unsigned char DriveISRVector;
+unsigned char AxleISRVector;
 char Mtext[30];
 
 // integers
-int HEloopcnt;
+int BounceRead;
+int currTachPinState;
+int prevTachPinState;
+int currDrivePinState;
+int prevDrivePinState;
+int currAxlePinState;
+int prevAxlePinState;
 int res;
 int li;
 int ri;
@@ -112,6 +131,8 @@ unsigned long AxlePulseCnt;
 arduino::String topline;
 arduino::String botline;
 arduino::String str;
+arduino::String str2;
+arduino::String str3;
 arduino::String strpm;
 arduino::String strph;
 arduino::String strHE;
@@ -127,11 +148,12 @@ OLED NewOled;
 
 struct PULSE
 {
-volatile unsigned long DiffMicros;
-volatile unsigned long CurrMicros;
-volatile unsigned long PrevMicros;
-volatile unsigned long Duration; 
+unsigned long DiffMillis;
+unsigned long CurrMillis;
+unsigned long PrevMillis;
+unsigned long Duration; 
 volatile unsigned int  PulseCnt;
+unsigned int  _PulseCnt;
 float         RPM;
 };
 // Root
@@ -153,20 +175,21 @@ int QTtime = 0;
 
 
 // Test/FeedBack/Debug functions
-void loopTest();
-void loopDebug();
+void WhatWhat(arduino::String);
+void Simulation();
 void SetPulse();
 void RunMode();
+// setup 
+void PinSetup();
+void ButtonSetup();
+void RunSetup();
 
 // HE functions
 void HESetup();
 void HELoop();
-void HELoopDebugB();
 void HELoopTestRPM();
 void HELoopTestGear();
 void HELoopErpm();
-void HEInit();
-void HEInitBase();
 void HETach();
 void HETachISR();
 void HEDrive();
@@ -198,6 +221,14 @@ void MatrixloopTestJ();
 void OLEDsetup();
 void OLEDloop();
 void OLEDpopup();
+
+// ISR functions
+void AttachTachISR();
+void AttachDriveISR();
+void AttachAxleISR();
+void DetachTachISR();
+void DetachDriveISR();
+void DetachAxleISR();
 
 #endif // ALLOUT_H
 /*

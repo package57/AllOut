@@ -4,10 +4,84 @@ void setup()
 {
 
   Serial.begin(BAUD);
-//  am I running
-  pinMode(LEDPinG, OUTPUT);
-  pinMode(LEDPinY, OUTPUT);   
-  pinMode(LEDPinB, OUTPUT);
+
+PinSetup();
+
+ButtonSetup();
+
+RunSetup();
+  
+// need to add SSD file system 
+
+// external OLED   
+  OLEDsetup();
+
+  NewOled.bmap = "setup"; OLEDloop();
+
+// external Hall Effect sensors
+  HESetup();
+
+// external 16x2 LCD display - the AllOut display
+  LCDsetup();
+
+// on board led matrix 
+  Matrixsetup();
+
+  str = "";
+  str += "Test Mode ";
+  str += TESTING;
+  str2 = "";
+  str2 += "Debug Mode ";
+  str2 += DEBUG;
+  str3 = "";
+  str3 += "FeedBack Mode ";
+  str3 += FEEDBACK;
+
+  if  (DEBUG)
+  {
+    Serial.println(str);
+    Serial.println(str2);
+    Serial.println(str3);
+  }
+
+  NewOled.bmap = str; OLEDloop();
+  NewOled.bmap = str2; OLEDloop();
+  NewOled.bmap = str3; OLEDloop();
+
+}
+void PinSetup()
+{
+
+//pinMode (DontusePin0, OUTPUT);    // 0 don't use
+//pinMode (DontusePin1, OUTPUT);    // 1 don't use
+  pinMode(TachPin, INPUT_PULLUP);   // 2 HEI Tachometer signal
+  pinMode(DrivePin, INPUT_PULLUP);  // 3 Transmission VSS signal 
+  pinMode(AxlePin, INPUT_PULLUP);   // 4 Axle hall effect sensor
+  pinMode (UnusedPin5, OUTPUT);     // 5 unused
+  pinMode (UnusedPin6, OUTPUT);     // 6 unused 
+  pinMode (UnusedPin7, OUTPUT);     // 7 unused
+
+}
+void ButtonSetup()
+{
+
+// run mode buttons
+  TestButb.attach(TestBut, INPUT);  // 8 toggle Testing runmode ( a simulation )
+  TestButb.interval(5);              
+  FeedBackButb.attach(FeedBackBut, INPUT);  // 9 toggle Feedback runmode
+  FeedBackButb.interval(5);
+  DebugButb.attach(DebugBut, INPUT ); // 10 toggle Debug runmode
+  DebugButb.interval(5);
+
+}
+void RunSetup()
+{
+
+// LED ouputs
+  pinMode(LEDPinB, OUTPUT);         // 11 blue LED  ( flash at startup, blink during Tach ISR )
+  pinMode(LEDPinY, OUTPUT);         // 12 yellow LED ( flash at startup, blink during Drive ISR )
+  pinMode(LEDPinG, OUTPUT);         // 13 green LED ( flash at startup, blink during Axle ISR )
+  //  am I running? flash the LED's
   digitalWrite(LEDPinG, HIGH);
   digitalWrite(LEDPinY, HIGH);
   digitalWrite(LEDPinB, HIGH);
@@ -16,196 +90,302 @@ void setup()
   digitalWrite(LEDPinY, LOW);
   digitalWrite(LEDPinB, LOW);
 
-// run mode buttons
-  pinMode(TestPin, INPUT_PULLUP);
-  TESTING = false;
-  pinMode(FeedBackPin, INPUT_PULLUP);
-  FEEDBACK = false;
-  pinMode(DebugPin, INPUT_PULLUP);
-  DEBUG = true;
-  ISRhit = false;
-  HEloopcnt = 1;
-
-// setup  
-  OLEDsetup();
-
-  NewOled.bmap = "setup"; OLEDloop(); Serial.println("setup");
-
-  HESetup();
-
-  LCDsetup();
-
-  Matrixsetup();
-
-  str = "";
-  str += "Test Mode ";
-  str += TESTING;
-  Serial.println(str);
-  NewOled.bmap = str; OLEDloop();
-  str = "";
-  str += "Debug Mode ";
-  str += DEBUG;
-  Serial.println(str);
-  NewOled.bmap = str; OLEDloop();
-  str = "";
-  str += "FeedBack Mode ";
-  str += FEEDBACK;
-  Serial.println(str);
-  NewOled.bmap = str; OLEDloop();
+  TESTING = true;   // defaul is simulation mode
+  FEEDBACK = false; // output bread crumbs to OLED
+  DEBUG = false;    // output bread crums to serial monitor
 
 }
 void HESetup()
 {
 
-  NewOled.bmap = "HESetup"; OLEDloop(); Serial.println("HEsetup");
+  WhatWhat("HESetup");
 
-  HEInit();
+  TachPulseCnt = 0;
+  DrivePulseCnt = 0;
+  AxlePulseCnt = 0;
+  GearRatio = 0.0;
+ 
+  Root.DiffMillis = 0;
+  Root.CurrMillis = 0;
+  Root.PrevMillis = 0;
+  Root.Duration = 0; 
+  Root.PulseCnt = 0;
+  Root._PulseCnt = 0;
+  Root.RPM = 0.0;
 
-// interrupt service routines
-  pinMode(TachPin, INPUT);    // HEI Tachometer signal
- 
-//  pinMode(DrivePin, INPUT);   // Transmission VSS signal 
+// Tachometer
+  Tach = Root;
+// Driveshaft
+  Drive = Root;
+// Axel
+  Axle = Root;
+
+  AttachTachISR();
   
-//  pinMode(AxlePin, INPUT);  // Axle hall effect sensor
+  AttachDriveISR();
   
-  attachInterrupt(TachPin, HETachISR, HIGH);  
-  
-//  attachInterrupt(DrivePin, HEDriveISR, LOW);
-  
-//  attachInterrupt(AxlePin, HEAxleISR, LOW); 
- 
+  AttachAxleISR();
+
 }
-
 void loop()
 {
+    
+  WhatWhat("loop");
 
-  if (FEEDBACK){NewOled.bmap = "loop"; OLEDloop();} if (DEBUG){Serial.print("loop "); Serial.println(HEloopcnt);}
- 
-  if (TESTING){loopTest();}
+  if (TESTING)
+  {
+    Simulation();
+  }
   else
   {
+    RunMode();
     HELoop();
     Matrixloop();
     LCDloop();
-    RunMode();
   }
   
-  if (DEBUG){loopDebug();}
+  if (DEBUG)
+  {  
+    str = "";
+    str = "Tach Pulse ";
+    str += String(Tach._PulseCnt);
+    Serial.println(str);  
+    str = "";
+    str = "Drive Pulse ";
+    str += String(Drive._PulseCnt);
+    Serial.println(str);
+    str = "";
+    str = "Axle Pulse ";
+    str += String(Axle._PulseCnt);
+    Serial.println(str);
+  }
 
 }
 void HELoop() 
 {
 
-  if (FEEDBACK){NewOled.bmap = "HEloop "; OLEDloop();} //if (DEBUG){Serial.println("HEloop");}
-  delay(1000);
-  detachInterrupt(TachPin);    
-//detachInterrupt(DrivePin);  
-//detachInterrupt(AxlePin); 
+  WhatWhat("HEloop");
 
-//temp          
-QTtime=millis()-QToldtime;
-QTrpm=(QTrev/QTtime)*60000;
-Serial.print("QT time ");
-Serial.print(QTtime);
-Serial.print(" rev ");
-Serial.print(QTrev);
-Serial.print(" rpm ");
-Serial.print(QTrpm);
-Serial.println(" ");
-QToldtime=millis();
-QTrev=0;
-//temp
-
-// Tachometer
+// Tachometer function
   HETach();
-// Transmission
-// here  HEDrive();
-// Axle
-// here  HEAxle();
+// Transmission function
+  HEDrive();
+// Axle function
+  HEAxle();
 
-  if (TESTING){HELoopTestRPM();}
-  if (TESTING){HELoopTestGear();}
+  if (TESTING)
+  {
+    HELoopTestRPM();
+    HELoopTestGear();
+  }
   else
   {
     HELoopErpm();
   }
 
-  HEloopcnt++;
-
-  if (ISRhit)
-  {
-    exit(0);
-  }
-
-  attachInterrupt(TachPin, HETachISR, HIGH); // get a pulse cnount 
-//  attachInterrupt(DrivePin, HEDriveISR, LOW);
-//  attachInterrupt(AxlePin, HEAxleISR, LOW); 
-
 }
 void HETach()
 {
 
-  if (FEEDBACK){NewOled.bmap = "HETach "; OLEDloop();} //if (DEBUG){Serial.println("HETach");}
+  WhatWhat("HETach");
 
 // The frequency of the pulses corresponds to the engine's RPM. For an 8-cylinder engine, 
-// there are 4 pulses per crankshaft revolution 
+// there are 4 pulses per crankshaft revolution (ppr) from the HEI distributor
 //  500 RPM x 4 ppr =   2000 pulses per minute / 60 = 33.33 pulses per second
 // 6000 RPM x 4 ppr = 24,000 pulses per minute / 60 = 400 pulses per second
 // (x pulses per second * 60) / 4 = RPM
+   
+  Tach.CurrMillis = millis();
+  Tach.DiffMillis = Tach.CurrMillis - Tach.PrevMillis;
+  Tach.Duration  += Tach.DiffMillis;  
   
-  Tach.RPM = Tach.PulseCnt / TachPPR;   
+  if (Tach.Duration > OneK) 
+  {
+    DetachTachISR();     
+    Tach._PulseCnt = Tach.PulseCnt;
+    Tach.RPM = Tach._PulseCnt / TachPPR;
+    Tach.Duration = 0;
+    Tach.PulseCnt = 0;
+    AttachTachISR();
+    Tach.PrevMillis = Tach.CurrMillis;
+  }
 
   if (DEBUG)
   {
     Serial.print("Tachometer pulse ");
-    Serial.print(Tach.PulseCnt);
+    Serial.print(Tach._PulseCnt);
     Serial.print(" RPM ");
     Serial.println(Tach.RPM);
   }
-    
-  Tach.Duration = 0; 
-  Tach.PulseCnt = 0;
 
 }
-void HETachISR()  // the isr is invoked from the attached until it is detached ! 
+void HEDrive()
 {
 
-  QTrev++;
+  WhatWhat("HEDrive");
+
+// The number of pulses per driveshaft revolution can vary depending on the specific T56 model and application.
+// Common setups include 8, 12, or 16 PPR.
+// 4th gear 1:1
+//  500 RPM x 8 ppr =   4000 pulses per minute / 60 = 66.66 pulses per second
+// 6000 RPM x 8 ppr = 48,000 pulses per minute / 60 = 800 pulses per second
+// (y pulses per second * 60) / 8 = RPM
+
+  Drive.CurrMillis = millis();
+  Drive.DiffMillis = Drive.CurrMillis - Drive.PrevMillis;
+  Drive.Duration  += Drive.DiffMillis;  
   
-  if (HEloopcnt > 10)
+  if (Drive.Duration > OneK)
   {
-    ISRhit = true;
+    DetachDriveISR();     
+    Drive._PulseCnt = Drive.PulseCnt;
+    Drive.RPM = Drive._PulseCnt / DrivePPR;
+    Drive.Duration = 0;
+    Drive.PulseCnt = 0;
+    AttachDriveISR();
+    Drive.PrevMillis = Drive.CurrMillis;
+  }  
+
+  if (DEBUG)
+  {
+    Serial.print("Drive pulse ");
+    Serial.print(Drive._PulseCnt);
+    Serial.print(" RPM ");
+    Serial.println(Drive.RPM);
   }
 
-  return;
-  digitalWrite(LEDPinG, HIGH);
- 
-  do // for one second
+}
+void HEAxle()
+{
+
+  WhatWhat("HEAxle");
+
+// The number of pulses per axle revolution is 1
+//  500 RPM x 1 ppr =   500 pulses per minute / 60 = 8.33 pulses per second
+// 6000 RPM x 1 ppr = 6,000 pulses per minute / 60 = 100 pulses per second
+// (z pulses per second * 60) / 8 = RPM
+  
+  Axle.CurrMillis = millis();
+  Axle.DiffMillis = Axle.CurrMillis - Axle.PrevMillis;
+  Axle.Duration  += Axle.DiffMillis;  
+  
+  if (Axle.Duration > OneK)
   {
-    Tach.CurrMicros = micros();
-    Tach.DiffMicros = Tach.CurrMicros - Tach.PrevMicros;
-    Tach.Duration += Tach.DiffMicros;   
-    Tach.PrevMicros = Tach.CurrMicros;
-    Tach.PulseCnt++;
-  } while (Tach.Duration < OneM);
-
-  digitalWrite(LEDPinG, LOW);
-
-}
-void HEInit()
-{
-
-  NewOled.bmap = "HEInit "; OLEDloop(); Serial.println("HEInit");
-
-  TachPulseCnt = 1;
-  DrivePulseCnt = 1;
-  AxlePulseCnt = 1;
-  GearRatio = 0.0;
+    DetachAxleISR();     
+    Axle._PulseCnt = Axle.PulseCnt;
+    Axle.RPM = Axle._PulseCnt / AxlePPR;
+    Axle.Duration = 0;
+    Axle.PulseCnt = 0;
+    AttachAxleISR();
+    Axle.PrevMillis = Axle.CurrMillis;
+  }   
+  
+  if (DEBUG)
+  {
+    Serial.print("Axle pulse ");
+    Serial.print(Axle._PulseCnt);
+    Serial.print(" RPM ");
+    Serial.println(Axle.RPM);
+  }
 
 }
-void loopTest()
+void HETachISR() 
 {
-//go through all the RPM range by 1000
+
+  Tach.PulseCnt++;
+
+}
+void HEDriveISR()
+{
+
+  Drive.PulseCnt++;
+
+}
+void HEAxleISR()
+{
+
+  Axle.PulseCnt++;
+
+}
+void AttachTachISR()
+{
+
+  WhatWhat("AttachTachISR");
+
+  TachISRVector = digitalPinToInterrupt(TachPin);  
+
+  if (TachISRVector != TachPin)
+  {
+    Serial.println("no Tach Vector ");
+    exit(0);
+  }   
+
+  attachInterrupt(TachISRVector, HETachISR, RISING); 
+
+}
+void DetachTachISR()
+{
+  
+  WhatWhat("DetachTachISR");
+  
+  detachInterrupt(TachISRVector);
+
+}
+void AttachDriveISR()
+{
+  
+  WhatWhat("AttachDriveISR");
+
+  DriveISRVector = digitalPinToInterrupt(DrivePin);  
+  
+  if (DriveISRVector != DrivePin)
+  {
+    Serial.println("no Drive Vector ");
+    exit(0);
+  }   
+  
+  attachInterrupt(DriveISRVector, HEDriveISR, RISING); 
+
+}
+void DetachDriveISR()
+{
+
+  WhatWhat("DetachDriveISR");
+
+  detachInterrupt(DriveISRVector);
+
+}
+void AttachAxleISR()
+{
+
+  WhatWhat("AttachAxleISR");
+
+  AxleISRVector = digitalPinToInterrupt(AxlePin);  
+  
+  if (AxleISRVector != AxlePin)
+  {
+    Serial.println("no Axle Vector ");
+    exit(0);
+  }
+
+  attachInterrupt(AxleISRVector, HEAxleISR, RISING); 
+
+}
+void DetachAxleISR()
+{
+  
+  WhatWhat("DetachDriveISR");
+
+  detachInterrupt(AxleISRVector);
+
+}
+void Simulation()
+{
+
+  WhatWhat("Simulation");
+
+//go through the RPM range by 1000
+// RPM ranges is limited to 6000 within HEI 
   for (i = 0; i < 6; i++)
   {
 //  go though all the gears from 1 to 6 
@@ -219,72 +399,68 @@ void loopTest()
   }
 
 }
-void loopDebug()
-{
-  
-  str = "";
-  str = "Basic Tach Pulse ";
-  str += String(Tach.PulseCnt);
-  Serial.println(str);  
-  
-  str = "";
-  str = "Basic Drive Pulse ";
-  str += String(Drive.PulseCnt);
-  Serial.println(str);
-  
-  str = "";
-  str = "Basic Axle Pulse ";
-  str += String(Axle.PulseCnt);
-  Serial.println(str);
-
-}
 void RunMode()
 {
-  
-  TestPinState = digitalRead(TestPin);
-  
-  if (TestPinState == LOW)
+
+  WhatWhat("RunMode");
+
+  BOOLEAN = TestButb.update();
+  BOOLEAN = FeedBackButb.update();
+  BOOLEAN = DebugButb.update();
+
+  if (TestButb.changed())
   {
-    Serial.println("Test Mode Changed");
-    TESTING = !TESTING;
-    str = "";
-    str += "Test Mode ";
-    str += TESTING;
-    Serial.println(str);
-    NewOled.bmap = str; OLEDloop();
+    BounceRead = TestButb.read();
+    if (BounceRead == LOW)
+    {
+      TESTING = !TESTING;
+      Serial.println("Test Mode Changed");
+      str = "";
+      str += "Test Mode ";
+      str += TESTING;
+      Serial.println(str);
+      NewOled.bmap = str; OLEDloop();
+      exit(0);
+    }
   }
 
-  DebugPinState = digitalRead(DebugPin);
-
-  if (DebugPinState == LOW)
+  if (DebugButb.changed())
   {
-    Serial.println("Debug Mode Changed");
-    DEBUG = !DEBUG;
-    str = "";
-    str += "Debug Mode ";
-    str += DEBUG;
-    Serial.println(str);
-    NewOled.bmap = str; OLEDloop();
+    BounceRead = DebugButb.read();
+    if (BounceRead == LOW)
+    {
+      DEBUG = !DEBUG;
+      Serial.println("Debug Mode Changed");
+      str = "";
+      str += "Debug Mode ";
+      str += DEBUG;
+      Serial.println(str);
+      NewOled.bmap = str; OLEDloop();
+      exit(0);
+    }
   }
 
-  FeedBackPinState = digitalRead(FeedBackPin);
-
-  if (FeedBackPinState == LOW)
+  if (FeedBackButb.changed())
   {
-    Serial.println("FeedbBack Mode Changed");
-    FEEDBACK = !FEEDBACK;
-    str = "";
-    str += "FeedBack Mode ";
-    str += FEEDBACK;
-    Serial.println(str);
-    NewOled.bmap = str; OLEDloop();
+    BounceRead = FeedBackButb.read();
+    if (BounceRead == LOW)
+    {
+      FEEDBACK = !FEEDBACK;
+      Serial.println("FeedbBack Mode Changed");
+      str = "";
+      str += "FeedBack Mode ";
+      str += FEEDBACK;
+      Serial.println(str);
+      NewOled.bmap = str; OLEDloop();
+      exit(0);
+    }
   } 
        
 }
 void LCDsetup() 
 {
 
-  NewOled.bmap = "LCDsetup"; OLEDloop(); Serial.println("LCDsetup");
+  WhatWhat("LCDsetup");
   
   LCDInit();
   
@@ -301,9 +477,7 @@ void LCDsetup()
 void LCDInit()
 {
 
-  NewOled.bmap = "LCDInit"; OLEDloop(); Serial.println("LCDInit");
-
-  buf = " ";
+  WhatWhat("LCDInit");
 
   EngineRPM = 6000;
   EngineRPH = 360000;
@@ -318,7 +492,7 @@ void LCDInit()
 void Matrixsetup()
 {
   
-  NewOled.bmap = "Matrixsetup"; OLEDloop(); Serial.println("Matrixsetup");
+  WhatWhat("Matrixsetup");
   
   matrix.begin();
   matrix.beginDraw();
@@ -348,23 +522,6 @@ void Matrixsetup()
 
 }
 
-void HEInitBase()
-{
- 
-  Root.DiffMicros = 0;
-  Root.CurrMicros = 0;
-  Root.PrevMicros = 0;
-  Root.Duration = 0; 
-  Root.PulseCnt = 0;
-  Root.RPM = 0.0;
-
-// Tachometer
-  Tach = Root;
-// Driveshaft
-  Drive = Root;
-// Axel
-  Axle = Root;
-}
 void OLEDsetup()
 {
 
@@ -389,7 +546,7 @@ void OLEDsetup()
 void LCDloop()
 {
 
-  if (FEEDBACK){NewOled.bmap = "LCD loop"; OLEDloop();} //if (DEBUG){Serial.println("OLDEsetup");}
+  WhatWhat("LCDloop");
 
   LCDcalc();
  
@@ -403,7 +560,7 @@ void LCDloop()
 void LCDcalc()
 {
 
-  if (FEEDBACK){NewOled.bmap = "LCDcalc"; OLEDloop();} //if (DEBUG){Serial.println("LCDcalc");}
+  WhatWhat("LCDcalc");
 
   EngineRPH = EngineRPM * 60;
  
@@ -423,7 +580,7 @@ void LCDcalc()
 void LCDtop()
 {
 
-  if (FEEDBACK){NewOled.bmap = "LCDtop"; OLEDloop();} //if (DEBUG){Serial.println("LCDtop");}
+  WhatWhat("LCDtop");
 
 //            0123456789012345
 // topline = "RPM 6000 g 12000" 
@@ -507,7 +664,7 @@ void LCDtop()
 void LCDbot()
 {
 
-  if (FEEDBACK){NewOled.bmap = "LCDbot "; OLEDloop();} //if (DEBUG){Serial.println("LCDbot");}
+  WhatWhat("LCDbot");
 
 //               0123456789012345
 // bottomline = " 3567 MPH 254.79" 
@@ -575,15 +732,29 @@ void LCDbot()
 void LCDlog()
 {
 
-  if (FEEDBACK){NewOled.bmap = "LCDlog "; OLEDloop();} //if (DEBUG){Serial.println("LCDlog");}
-  if (TESTING){LCDLogTest();}
-  if (FEEDBACK){LCDLogFeed();}
-  if (DEBUG){LCDLogDebug();}
+  WhatWhat("LCDlog");
+
+  if (TESTING)
+  {
+    LCDLogTest();
+  }
+  
+  if (FEEDBACK)
+  {
+    LCDLogFeed();
+  }
+  
+  if (DEBUG)
+  {
+    LCDLogDebug();
+  }
 
 }
 void LCDLogTest()
 {
     
+  WhatWhat("LCDLogTest");
+
   switch (j)
   {
   case 0:
@@ -616,6 +787,8 @@ void LCDLogTest()
 void LCDLogFeed()
 {
 
+  WhatWhat("LCDLogFeed");
+
   str = String(EngineRPH);       NewOled.bmap = str; OLEDloop();
   str = String(EngineRPM);       NewOled.bmap = str; OLEDloop();
   str = String(TransmissionRPH); NewOled.bmap = str; OLEDloop();
@@ -627,6 +800,8 @@ void LCDLogFeed()
 }
 void LCDLogDebug()
 {
+
+  WhatWhat("LCDLogDebug");
 
 // per hour
   strph = "";
@@ -691,7 +866,8 @@ void OLEDpopup()
 }
 void Matrixloop() 
 {
-  if (FEEDBACK){NewOled.bmap = "Matrixloop"; OLEDloop();} //if (DEBUG){Serial.println("Matrixloop");}
+
+  WhatWhat("Matrixloop");
 
   matrix.beginDraw();
   matrix.stroke(0xFFFFFFFF);
@@ -700,7 +876,6 @@ void Matrixloop()
   else
   {
     MatrixloopRPM();
-
   }        
 
   matrix.textFont(Font_4x6);
@@ -713,7 +888,10 @@ void Matrixloop()
   matrix.stroke(0xFFFFFFFF);
   matrix.textScrollSpeed(100);
 
-  if (TESTING){MatrixloopTestJ();}
+  if (TESTING)
+  {
+    MatrixloopTestJ();
+  }
   else
   {
     MatrixloopGear();           
@@ -728,6 +906,8 @@ void Matrixloop()
 }
 void MatrixloopRPM()
 {
+
+  WhatWhat("MatrixloopRPM");
 
   Mtext[1] = '0';
   Mtext[2] = '0';
@@ -767,6 +947,8 @@ void MatrixloopRPM()
 }
 void MatrixloopGear()
 {
+
+  WhatWhat("MatrixloopGear");
 
   switch (Gearn)
   {
@@ -879,21 +1061,10 @@ void MatrixloopTestJ()
   }
 
 }
-void HELoopDebugB()
-{
-
-  Serial.print("Hall Effect Tach ");  
-  Serial.print(Tach.RPM);  
-  Serial.print(" Drive ");
-  Serial.print(Drive.RPM);
-  Serial.print(" Gear ");
-  Serial.print(Gear);
-  Serial.print(" Axle ");
-  Serial.println(Axle.RPM);
-
-}
 void HELoopTestRPM()
 {
+
+  WhatWhat("HELoopTestRPM");
 
   switch (i)
   {
@@ -933,6 +1104,8 @@ void HELoopTestRPM()
 void HELoopTestGear()
 {
 
+  WhatWhat("HELoopTestGear");
+
   switch (j)
   {
   case 0:
@@ -964,7 +1137,8 @@ void HELoopTestGear()
 }
 void HELoopErpm()
 {
-  if (FEEDBACK){NewOled.bmap = "HELoopERpm"; OLEDloop();} //if (DEBUG){Serial.println("HELoopERpm");}
+
+  WhatWhat("HELoopErpm");
 
   if (EngineRPM == (TransmissionRPM / FirstGear))
   {
@@ -1008,8 +1182,9 @@ void HELoopErpm()
 }
 void SetPulse()
 {
-  if (FEEDBACK){NewOled.bmap = "SetPulse"; OLEDloop();} //if (DEBUG){Serial.println("SetPulse");}
- 
+  
+  WhatWhat("SetPulse");
+
   if (TESTING)
   {
     switch (j)
@@ -1042,83 +1217,18 @@ void SetPulse()
   AxlePulseCnt *= AxlePPR;
 
 }
-void HEDrive()
+void WhatWhat(arduino::String buf)
 {
 
-  if (FEEDBACK){NewOled.bmap = "HEDrive"; OLEDloop();} //if (DEBUG){Serial.println("HEDrive");}
-
-// The number of pulses per driveshaft revolution can vary depending on the specific T56 model and application.
-// Common setups include 8, 12, or 16 PPR.
-// 4th gear 1:1
-//  500 RPM x 8 ppr =   4000 pulses per minute / 60 = 66.66 pulses per second
-// 6000 RPM x 8 ppr = 48,000 pulses per minute / 60 = 800 pulses per second
-// (y pulses per second * 60) / 8 = RPM
-  
-  Drive.RPM = Drive.PulseCnt / DrivePPR;   
+  if (FEEDBACK)
+  {
+    NewOled.bmap = buf;
+    OLEDloop();
+  }
   
   if (DEBUG)
   {
-    Serial.print("Drive pulse ");
-    Serial.print(Drive.PulseCnt);
-    Serial.print(" RPM ");
-    Serial.println(Drive.RPM);
+    Serial.println(buf);
   }
 
-  Drive.Duration = 0; 
-  Drive.PulseCnt = 0;
-
 }
-void HEDriveISR()
-{
-  digitalWrite(LEDPinY, HIGH);
-
-  Drive.CurrMicros = micros();
-  Drive.DiffMicros = Drive.CurrMicros - Drive.PrevMicros;
-  Drive.Duration += Drive.DiffMicros;
-  Drive.PrevMicros = Drive.CurrMicros;
-  Drive.PulseCnt++;
-
-  digitalWrite(LEDPinY, LOW);
-
-}
-void HEAxle()
-{
-
-  if (FEEDBACK){NewOled.bmap = "HEAxle "; OLEDloop();} //if (DEBUG){Serial.println("HEAxle");}
-
-// The number of pulses per axle revolution is 1
-//  500 RPM x 1 ppr =   500 pulses per minute / 60 = 8.33 pulses per second
-// 6000 RPM x 1 ppr = 6,000 pulses per minute / 60 = 100 pulses per second
-// (z pulses per second * 60) / 8 = RPM
-  
-  Axle.RPM = Axle.PulseCnt * 60;
-  Axle.RPM /= AxlePPR;  
-  
-  if (DEBUG)
-  {
-    Serial.print("Axle pulse ");
-    Serial.print(Axle.PulseCnt);
-    Serial.print(" RPM ");
-    Serial.println(Axle.RPM);
-  }
-
-  Axle.Duration = 0; 
-  Axle.PulseCnt = 0;
-
-}
-void HEAxleISR()
-{
-// basic
-  digitalWrite(LEDPinB, HIGH);
-  //exit(0);
-
-  Axle.CurrMicros = micros();
-  Axle.DiffMicros = Axle.CurrMicros - Axle.PrevMicros;
-  Axle.Duration += Axle.DiffMicros;
-  Axle.PrevMicros = Axle.CurrMicros;
-  Axle.PulseCnt++;
-
-  digitalWrite(LEDPinB, LOW);
-
-}
-
