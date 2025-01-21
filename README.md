@@ -1,3 +1,13 @@
+NOTICE
+
+this project was a failure
+every piece works individually, but, not combined
+it's too much for the Arduino
+
+that being said, it's still a good repository for examples, ideas and guidlines   
+
+I will reduce the project into three separate parts, each minimalist versions  
+END NOTICE
 I did a inline 6 to v8 engine swap. The original speedometer is a cable drive and the tachometer has a normal input for a 6 cylinder. 
 I tried to use a fancy black box to reuse the original Tachometer but that didn't work. The new transmission emits a signal from a 
 Vehicle Speed Sensor. The Tachometer and Transiomission both emit a digital square wave signal. What to do?
